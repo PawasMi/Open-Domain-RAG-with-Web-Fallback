@@ -676,5 +676,4 @@ if question:
                     "The assistant used external "
                     "knowledge to answer."
                 )
-```
 
