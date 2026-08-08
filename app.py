@@ -1,14 +1,17 @@
-import os
+```python
 import joblib
 import streamlit as st
 import numpy as np
 
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
-
 from groq import Groq
-from langchain_community.tools import DuckDuckGoSearchRun
+from ddgs import DDGS
 
+
+# ==========================================================
+# STREAMLIT CONFIGURATION
+# ==========================================================
 
 st.set_page_config(
     page_title="AI Teaching Assistant",
@@ -18,41 +21,38 @@ st.set_page_config(
 
 
 # ==========================================================
+# SESSION STATE
+# ==========================================================
+
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+if "show_history" not in st.session_state:
+    st.session_state.show_history = False
+
+
+# ==========================================================
 # CUSTOM CSS
 # ==========================================================
 
 st.markdown(
     """
-<style>
+    <style>
 
-.block-container{
-    padding-top:2rem;
-    padding-bottom:2rem;
-}
+    .main-title {
+        font-size: 38px;
+        font-weight: 700;
+        margin-bottom: 5px;
+    }
 
-.main-title{
-    font-size:38px;
-    font-weight:700;
-    color:#4F8BF9;
-}
+    .subtitle {
+        font-size: 18px;
+        color: #6b7280;
+        margin-bottom: 25px;
+    }
 
-.subtitle{
-    font-size:18px;
-    color:gray;
-    margin-bottom:20px;
-}
-
-.stChatMessage{
-    border-radius:15px;
-    padding:8px;
-}
-
-div[data-testid="stSidebar"]{
-    background:#f8f9fa;
-}
-
-</style>
-""",
+    </style>
+    """,
     unsafe_allow_html=True
 )
 
@@ -62,12 +62,14 @@ div[data-testid="stSidebar"]{
 # ==========================================================
 
 st.markdown(
-    '<p class="main-title">🎓 AI Teaching Assistant</p>',
+    '<div class="main-title">🎓 AI Teaching Assistant</div>',
     unsafe_allow_html=True
 )
 
 st.markdown(
-    '<p class="subtitle">Ask questions from your lecture transcript using Hybrid RAG + Groq</p>',
+    '<div class="subtitle">'
+    'Ask questions from your lecture transcript using Hybrid RAG + Groq'
+    '</div>',
     unsafe_allow_html=True
 )
 
@@ -87,26 +89,24 @@ with st.sidebar:
         unsafe_allow_html=True
     )
 
-    
-
     st.markdown("### 💬 Conversation")
 
-    # -----------------------------
-    # Chat History Button
-    # -----------------------------
-
-    if "show_history" not in st.session_state:
-        st.session_state.show_history = False
+    # ------------------------------------------------------
+    # CHAT HISTORY
+    # ------------------------------------------------------
 
     if st.button(
         "💬 Chat History",
         use_container_width=True
     ):
-        st.session_state.show_history = not st.session_state.show_history
 
-    # -----------------------------
-    # Display History
-    # -----------------------------
+        st.session_state.show_history = (
+            not st.session_state.show_history
+        )
+
+    # ------------------------------------------------------
+    # DISPLAY HISTORY
+    # ------------------------------------------------------
 
     if st.session_state.show_history:
 
@@ -134,11 +134,9 @@ with st.sidebar:
 
                 st.divider()
 
-   
-
-    # -----------------------------
-    # Clear Chat
-    # -----------------------------
+    # ------------------------------------------------------
+    # CLEAR CHAT
+    # ------------------------------------------------------
 
     if st.button(
         "🗑 Clear Chat",
@@ -152,20 +150,30 @@ with st.sidebar:
     st.markdown("---")
 
     st.caption(
-        "💡 Ask anything from your lecture.\n\nIf the answer is not found in the transcript, the assistant automatically searches the web."
+        "💡 Ask anything from your lecture.\n\n"
+        "If the answer is not found in the transcript, "
+        "the assistant automatically searches the web."
     )
 
 
-
-
-    
 # ==========================================================
 # GROQ CLIENT
 # ==========================================================
 
+if "GROQ_API_KEY" not in st.secrets:
+
+    st.error(
+        "GROQ_API_KEY is missing. "
+        "Please add it in Streamlit Cloud Secrets."
+    )
+
+    st.stop()
+
+
 client = Groq(
     api_key=st.secrets["GROQ_API_KEY"]
 )
+
 
 # ==========================================================
 # LOAD EMBEDDING MODEL + DATA
@@ -189,7 +197,7 @@ embedding_model, df = load_resources()
 
 
 # ==========================================================
-# DATAFRAME
+# DATA
 # ==========================================================
 
 chunks = df["text"].tolist()
@@ -200,12 +208,6 @@ embeddings = np.vstack(
 
 
 # ==========================================================
-# SEARCH TOOL
-# ==========================================================
-
-search = DuckDuckGoSearchRun()
-
-# ==========================================================
 # WEB SEARCH
 # ==========================================================
 
@@ -213,9 +215,47 @@ def web_search(query):
 
     try:
 
-        result = search.run(query)
+        with DDGS() as ddgs:
 
-        return result[:4000]
+            results = list(
+                ddgs.text(
+                    query,
+                    max_results=5
+                )
+            )
+
+        if not results:
+
+            return "No external information found."
+
+        formatted_results = []
+
+        for result in results:
+
+            title = result.get(
+                "title",
+                ""
+            )
+
+            body = result.get(
+                "body",
+                ""
+            )
+
+            href = result.get(
+                "href",
+                ""
+            )
+
+            formatted_results.append(
+                f"Title: {title}\n"
+                f"Content: {body}\n"
+                f"Source: {href}"
+            )
+
+        return "\n\n".join(
+            formatted_results
+        )[:4000]
 
     except Exception:
 
@@ -228,32 +268,38 @@ def web_search(query):
 
 def retrieve_context(question):
 
-    # Create Question Embedding
+    # ------------------------------------------------------
+    # QUESTION EMBEDDING
+    # ------------------------------------------------------
 
     question_embedding = embedding_model.encode(
         [question],
         convert_to_numpy=True
     )
 
-
-    # Cosine Similarity
+    # ------------------------------------------------------
+    # COSINE SIMILARITY
+    # ------------------------------------------------------
 
     similarity_scores = cosine_similarity(
         question_embedding,
         embeddings
     )[0]
 
+    # ------------------------------------------------------
+    # TOP 3 CHUNKS
+    # ------------------------------------------------------
 
-    # Top 3 Most Similar Chunks
+    top_indices = np.argsort(
+        similarity_scores
+    )[-3:][::-1]
 
-    top_indices = np.argsort(similarity_scores)[-3:][::-1]
-
-
-    top_score = similarity_scores[top_indices[0]]
-
+    top_score = similarity_scores[
+        top_indices[0]
+    ]
 
     # ------------------------------------------------------
-    # Lecture Context
+    # LECTURE CONTEXT
     # ------------------------------------------------------
 
     lecture_context = "\n\n".join(
@@ -264,8 +310,9 @@ def retrieve_context(question):
 
     )
 
-
-    lecture_chunks = df.iloc[top_indices][
+    lecture_chunks = df.iloc[
+        top_indices
+    ][
         [
             "chunk_id",
             "start",
@@ -274,46 +321,36 @@ def retrieve_context(question):
         ]
     ]
 
-
     # ------------------------------------------------------
-    # Decide Source
+    # SIMILARITY THRESHOLD
     # ------------------------------------------------------
 
     SIMILARITY_THRESHOLD = 0.45
 
+    # ------------------------------------------------------
+    # LECTURE MATCH
+    # ------------------------------------------------------
 
     if top_score >= SIMILARITY_THRESHOLD:
 
         return {
-
             "context": lecture_context,
-
             "source": "lecture",
-
             "score": float(top_score),
-
             "chunks": lecture_chunks
-
         }
 
-
     # ------------------------------------------------------
-    # Web Fallback
+    # WEB FALLBACK
     # ------------------------------------------------------
 
     web_context = web_search(question)
 
-
     return {
-
         "context": web_context,
-
         "source": "web",
-
         "score": float(top_score),
-
         "chunks": lecture_chunks
-
     }
 
 
@@ -331,7 +368,7 @@ def source_badge(source):
 
 
 # ==========================================================
-# SIMILARITY COLOR
+# SIMILARITY LABEL
 # ==========================================================
 
 def similarity_color(score):
@@ -354,10 +391,14 @@ def similarity_color(score):
 
 
 # ==========================================================
-# PROMPT TEMPLATE
+# PROMPT
 # ==========================================================
 
-def build_prompt(question, context, source):
+def build_prompt(
+    question,
+    context,
+    source
+):
 
     if source == "lecture":
 
@@ -383,13 +424,17 @@ You are an AI Teaching Assistant.
 
 The lecture does not contain the answer.
 
-Use the following external information to answer accurately.
+Use the following external information
+to answer accurately.
 
 External Context:
 
 {context}
 
 Provide a student-friendly explanation.
+
+Do not invent facts that are not supported
+by the external context.
 """
 
     return system_prompt
@@ -399,7 +444,11 @@ Provide a student-friendly explanation.
 # GROQ GENERATION
 # ==========================================================
 
-def generate_answer(question, context, source):
+def generate_answer(
+    question,
+    context,
+    source
+):
 
     prompt = build_prompt(
         question,
@@ -416,22 +465,20 @@ def generate_answer(question, context, source):
         max_tokens=700,
 
         messages=[
-
             {
                 "role": "system",
                 "content": prompt
             },
-
             {
                 "role": "user",
                 "content": question
             }
-
         ]
-
     )
 
-    return response.choices[0].message.content.strip()
+    return response.choices[
+        0
+    ].message.content.strip()
 
 
 # ==========================================================
@@ -440,7 +487,9 @@ def generate_answer(question, context, source):
 
 def ask_ai(question):
 
-    retrieval = retrieve_context(question)
+    retrieval = retrieve_context(
+        question
+    )
 
     context = retrieval["context"]
 
@@ -450,45 +499,20 @@ def ask_ai(question):
 
     chunks = retrieval["chunks"]
 
-
     answer = generate_answer(
-
         question,
-
         context,
-
         source
-
     )
 
-
     return {
-
         "answer": answer,
-
         "context": context,
-
         "source": source,
-
         "score": score,
-
         "chunks": chunks
-
     }
 
-
-# ==========================================================
-# SEARCH TOOL
-# ==========================================================
-
-search = DuckDuckGoSearchRun()
-
-# ==========================================================
-# SESSION STATE
-# ==========================================================
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
 
 # ==========================================================
 # DISPLAY PREVIOUS CHAT HISTORY
@@ -496,8 +520,14 @@ if "messages" not in st.session_state:
 
 for message in st.session_state.messages:
 
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+    with st.chat_message(
+        message["role"]
+    ):
+
+        st.markdown(
+            message["content"]
+        )
+
 
 # ==========================================================
 # CHAT INPUT
@@ -514,9 +544,9 @@ question = st.chat_input(
 
 if question:
 
-    # --------------------------------------
-    # Display User Message
-    # --------------------------------------
+    # ------------------------------------------------------
+    # USER MESSAGE
+    # ------------------------------------------------------
 
     st.session_state.messages.append(
         {
@@ -529,10 +559,9 @@ if question:
 
         st.markdown(question)
 
-
-    # --------------------------------------
-    # Generate Answer
-    # --------------------------------------
+    # ------------------------------------------------------
+    # AI RESPONSE
+    # ------------------------------------------------------
 
     with st.chat_message("assistant"):
 
@@ -548,15 +577,15 @@ if question:
 
             retrieved_chunks = result["chunks"]
 
-
-        # --------------------------------------
-        # AI Answer
-        # --------------------------------------
+        # --------------------------------------------------
+        # ANSWER
+        # --------------------------------------------------
 
         st.markdown(answer)
 
-
-        # Save Assistant Message
+        # --------------------------------------------------
+        # SAVE ANSWER
+        # --------------------------------------------------
 
         st.session_state.messages.append(
             {
@@ -565,42 +594,56 @@ if question:
             }
         )
 
-
-        # --------------------------------------
-        # Source Badge
-        # --------------------------------------
+        # --------------------------------------------------
+        # SOURCE
+        # --------------------------------------------------
 
         if source == "lecture":
 
-            st.success("📚 Answer generated from Lecture")
+            st.success(
+                "📚 Answer generated from Lecture"
+            )
 
         else:
 
-            st.info("🌐 Answer generated using External Knowledge")
+            st.info(
+                "🌐 Answer generated using External Knowledge"
+            )
 
+        # --------------------------------------------------
+        # SIMILARITY
+        # --------------------------------------------------
 
-        # --------------------------------------
-        # Similarity Score
-        # --------------------------------------
-
-        st.progress(min(score, 1.0))
-
-        st.caption(
-            f"Match Similarity : {score*100:.1f}%"
+        st.progress(
+            min(
+                max(score, 0.0),
+                1.0
+            )
         )
 
-        # --------------------------------------
-        # Transcript Chunks
-        # --------------------------------------
+        st.caption(
+            f"Match Similarity: "
+            f"{score * 100:.1f}%"
+        )
+
+        st.caption(
+            similarity_color(score)
+        )
+
+        # --------------------------------------------------
+        # TRANSCRIPT CHUNKS
+        # --------------------------------------------------
 
         if source == "lecture":
 
-            with st.expander("📚 Relevant Transcript Chunks"):
+            with st.expander(
+                "📚 Relevant Transcript Chunks"
+            ):
 
                 for _, row in retrieved_chunks.iterrows():
 
                     st.markdown(
-f"""
+                        f"""
 ### Chunk {row['chunk_id']}
 
 **Time**
@@ -615,14 +658,24 @@ f"""
 
                     st.divider()
 
+        # --------------------------------------------------
+        # WEB SEARCH INFO
+        # --------------------------------------------------
+
         else:
 
-            with st.expander("🌐 Search Information"):
+            with st.expander(
+                "🌐 Search Information"
+            ):
 
                 st.write(
-                    "The lecture did not contain sufficient information."
+                    "The lecture did not contain "
+                    "sufficient information."
                 )
 
                 st.write(
-                    "The assistant used external knowledge to answer."
+                    "The assistant used external "
+                    "knowledge to answer."
                 )
+```
+
