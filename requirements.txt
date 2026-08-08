@@ -1,0 +1,11 @@
+streamlit
+groq
+sentence-transformers
+scikit-learn
+numpy
+pandas
+joblib
+
+langchain-community
+duckduckgo-search
+beautifulsoup4
