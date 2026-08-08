@@ -164,7 +164,7 @@ with st.sidebar:
 # ==========================================================
 
 client = Groq(
-    api_key=os.getenv("GROQ_API_KEY")
+    api_key=st.secrets("GROQ_API_KEY")
 )
 
 
