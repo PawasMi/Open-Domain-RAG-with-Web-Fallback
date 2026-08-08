@@ -7,5 +7,5 @@ pandas
 joblib
 
 langchain-community
-duckduckgo-search
+ddgs
 beautifulsoup4
